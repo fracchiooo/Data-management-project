@@ -1,0 +1,263 @@
+BEGIN;
+
+ALTER TABLE "status-nation"
+ALTER COLUMN "access_to_clean_fuels_and_technologies_for_cooking" TYPE FLOAT
+USING "access_to_clean_fuels_and_technologies_for_cooking"::FLOAT;
+
+ALTER TABLE "status-nation"
+ALTER COLUMN "current_health_expenditure_GDP" TYPE DOUBLE PRECISION
+USING "current_health_expenditure_GDP"::DOUBLE PRECISION;
+
+ALTER TABLE "status-nation"
+ALTER COLUMN "educational_attaintament_completed_secondary" TYPE DOUBLE PRECISION
+USING "educational_attaintament_completed_secondary"::DOUBLE PRECISION;
+
+ALTER TABLE "status-nation"
+ALTER COLUMN "GDP_per_capita_USD" TYPE DOUBLE PRECISION
+USING "GDP_per_capita_USD"::DOUBLE PRECISION;
+
+ALTER TABLE "status-nation"
+ALTER COLUMN "urban_population" TYPE INTEGER
+USING "urban_population"::INTEGER;
+
+
+ALTER TABLE disease
+ALTER COLUMN year_key TYPE INTEGER
+USING year_key::INTEGER;
+
+ALTER TABLE disease
+ALTER COLUMN location_key TYPE INTEGER
+USING location_key::INTEGER;
+
+
+ALTER TABLE location
+ALTER COLUMN location_key TYPE INTEGER
+USING location_key::INTEGER;
+
+ALTER TABLE pollution
+ALTER COLUMN year_key TYPE INTEGER
+USING year_key::INTEGER;
+
+ALTER TABLE pollution
+ALTER COLUMN location_key TYPE INTEGER
+USING location_key::INTEGER;
+
+ALTER TABLE year
+ALTER COLUMN year_key TYPE INTEGER
+USING year_key::INTEGER;
+
+
+ALTER TABLE "status-nation"
+ALTER COLUMN year_key TYPE INTEGER
+USING year_key::INTEGER;
+
+ALTER TABLE "status-nation"
+ALTER COLUMN location_key TYPE INTEGER
+USING location_key::INTEGER;
+
+
+ALTER TABLE year
+ADD PRIMARY KEY (year_key);
+
+ALTER TABLE location
+ADD PRIMARY KEY (location_key);
+
+ALTER TABLE disease
+ADD CONSTRAINT fk_year_d
+FOREIGN KEY (year_key) REFERENCES year(year_key);
+
+ALTER TABLE disease
+ADD CONSTRAINT fk_nation_d
+FOREIGN KEY (location_key) REFERENCES location(location_key);
+
+ALTER TABLE pollution
+ADD CONSTRAINT fk_year_p
+FOREIGN KEY (year_key) REFERENCES year(year_key);
+
+ALTER TABLE pollution
+ADD CONSTRAINT fk_nation_p
+FOREIGN KEY (location_key) REFERENCES location(location_key);
+
+ALTER TABLE "status-nation"
+ADD CONSTRAINT fk_year_s
+FOREIGN KEY (year_key) REFERENCES year(year_key);
+
+ALTER TABLE "status-nation"
+ADD CONSTRAINT fk_nation_s
+FOREIGN KEY (location_key) REFERENCES location(location_key);
+
+
+ALTER TABLE "status-nation"
+ADD COLUMN id SERIAL;
+
+ALTER TABLE pollution
+ADD COLUMN id SERIAL;
+
+ALTER TABLE disease
+ADD COLUMN id SERIAL;
+
+
+ALTER TABLE "status-nation"
+ADD CONSTRAINT status_nation_pkey PRIMARY KEY (id);
+
+ALTER TABLE pollution
+ADD CONSTRAINT pollution_pkey PRIMARY KEY (id);
+
+ALTER TABLE disease
+ADD CONSTRAINT disease_pkey PRIMARY KEY (id);
+
+ALTER TABLE disease
+ADD CONSTRAINT disease_key UNIQUE (cause_name, year_key, location_key);
+
+ALTER TABLE "status-nation"
+ADD CONSTRAINT status_nation_key UNIQUE (year_key, location_key);
+
+ALTER TABLE pollution
+ADD CONSTRAINT pollution_key UNIQUE (year_key, location_key);
+
+ALTER TABLE location
+ALTER COLUMN iso3 set not null;
+
+ALTER TABLE year
+ADD CONSTRAINT y_key UNIQUE (year);
+
+COMMIT;
+
+
+
+
+BEGIN;
+
+-- DIMENSION TABLES
+
+CREATE TABLE Status_nation_s (
+    key_status_nation INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    access_to_clean_fuels_and_technologies_for_cooking double precision,
+    "GDP_per_capita_USD" double precision,
+    "current_health_expenditure_GDP" double precision
+);
+
+CREATE TABLE Location_s (
+    key_location INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    location VARCHAR(100) UNIQUE,
+    sub_region VARCHAR(100),
+    region VARCHAR(100)
+);
+
+CREATE TABLE Year_s (
+    key_year INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    year INT UNIQUE,
+    decade INT
+);
+
+CREATE TABLE Pollution_s (
+    key_pm2_5 INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    pm2_5_value_mg_m3 double precision
+);
+
+-- FACT TABLE
+
+CREATE TABLE Disease_s (
+    key_year INT,
+    key_location INT,
+    key_status_nation INT,
+    key_pm2_5 INT,
+    cause_name VARCHAR(255),
+    val double precision,
+    upper double precision,
+    lower double precision,
+    PRIMARY KEY (key_year, key_location, cause_name),
+    FOREIGN KEY (key_year) REFERENCES Year_s(key_year),
+    FOREIGN KEY (key_location) REFERENCES Location_s(key_location),
+    FOREIGN KEY (key_status_nation) REFERENCES Status_nation_s(key_status_nation),
+    FOREIGN KEY (key_pm2_5) REFERENCES Pollution_s(key_pm2_5)
+);
+
+CREATE OR REPLACE FUNCTION get_decade(year_input INT)
+RETURNS INT AS $$
+BEGIN
+    RETURN (year_input / 10) * 10;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+
+insert into Pollution_s (pm2_5_value_mg_m3)
+select distinct "PM2_5_value_mg_m3"
+from pollution;
+
+
+insert into Location_s (location, sub_region, region)
+select "Country Name", "Sub-region Name", "Region Name"
+from location;
+
+insert into Status_nation_s (access_to_clean_fuels_and_technologies_for_cooking, "GDP_per_capita_USD", "current_health_expenditure_GDP")
+select distinct access_to_clean_fuels_and_technologies_for_cooking, "GDP_per_capita_USD", "current_health_expenditure_GDP"
+from "status-nation";
+
+
+insert into Year_s (year, decade)
+select year, decade  
+from (
+select year, get_decade(year) AS decade
+from year
+);
+
+
+
+insert into Disease_s(key_year, key_location, key_status_nation, key_pm2_5, cause_name, val, upper, lower)
+select Ys.key_year, Ls.key_location, Ss.key_status_nation, Ps.key_pm2_5, d.cause_name, d.val, d.upper, d.lower
+from disease d join year y on d.year_key=y.year_key join location l on d.location_key = l.location_key join pollution p on (y.year_key = p.year_key and l.location_key = p.location_key) join "status-nation" s on (y.year_key = s.year_key and l.location_key = s.location_key) join Year_s Ys on y.year=Ys.year join Location_s Ls on l."Country Name"=Ls.location join Pollution_s Ps on Ps.pm2_5_value_mg_m3=p."PM2_5_value_mg_m3" join Status_nation_s Ss on (
+ s.access_to_clean_fuels_and_technologies_for_cooking IS NOT DISTINCT FROM Ss.access_to_clean_fuels_and_technologies_for_cooking
+ AND s."GDP_per_capita_USD" IS NOT DISTINCT FROM Ss."GDP_per_capita_USD"
+ AND s."current_health_expenditure_GDP" IS NOT DISTINCT FROM Ss."current_health_expenditure_GDP"
+);
+
+COMMIT;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
